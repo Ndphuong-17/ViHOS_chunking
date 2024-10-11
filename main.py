@@ -18,8 +18,8 @@ def main(args):
     print(f"Using device: {device}")
 
     # Load the tokenizer and input model
-    input_model = XLMRobertaModel.from_pretrained("vinai/phobert-base")
-    tokenizer = AutoTokenizer.from_pretrained("vinai/phobert-base")
+    input_model = XLMRobertaModel.from_pretrained(args.model)
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
     input_model.resize_token_embeddings(len(tokenizer))
 
     # Handle test index and data splitting
@@ -95,6 +95,7 @@ if __name__ == "__main__":
     parser.add_argument('--test_index', type=int, default=None, help="Index for test split, if applicable")
 
     # Model training parameters
+    parser.add_argument('--model', type=str, default="vinai/phobert-base", help="Pretrained language model")
     parser.add_argument('--batch_size', type=int, default=64, help="Batch size for training and evaluation")
     parser.add_argument('--max_len', type=int, default=64, help="Maximum sequence length for tokenization")
     parser.add_argument('--shuffle', type=bool, default=False, help="Shuffle data during evaluation")
