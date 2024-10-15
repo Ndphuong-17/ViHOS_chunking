@@ -3,7 +3,10 @@ import os
 import json
 import torch
 import tensorflow as tf
-from transformers import XLMRobertaModel, AutoTokenizer
+from transformers import (
+AutoModelForSequenceClassification,
+AutoTokenizer, AutoModel
+)
 from Code.Dataset import split_path, create_dataloader
 from Code.Model import setup_model, MultiTaskModel, train, test
 from tqdm import tqdm
@@ -18,9 +21,18 @@ def main(args):
     print(f"Using device: {device}")
 
     # Load the tokenizer and input model
-    input_model = XLMRobertaModel.from_pretrained(args.model)
+    classes = ['Anger','Disgust','Enjoyment','Fear','Other','Sadness','Surprise']
     tokenizer = AutoTokenizer.from_pretrained(args.model)
-    input_model.resize_token_embeddings(len(tokenizer))
+    embedding_model = AutoModel.from_pretrained(args.model)
+    classification_model = AutoModelForSequenceClassification.from_pretrained(
+        args.model,
+        num_labels=len(classes)  # Number of classes
+    )
+    # clear_output()
+
+    # Adjust the token embeddings size if needed
+    embedding_model.resize_token_embeddings(len(tokenizer))
+
 
     # Handle test index and data splitting
     if args.test_index is not None and args.test_index > 3:
@@ -44,10 +56,24 @@ def main(args):
         test_path, batch_size=args.batch_size, tokenizer=tokenizer, max_len=args.max_len
     )
 
+    # Get the first batch of data from the DataLoader
+    first_batch = next(iter(test_dataloader))
+
+    # Access input_ids, attention_mask, and labels
+    input_ids = first_batch['input_ids']
+    attention_mask = first_batch['attention_mask']
+    labels = first_batch['label']
+
+    # Print to check
+    print(f"Input IDs: {input_ids.size()}")
+    print(f"Attention Mask: {attention_mask.size()}")
+    print(f"Labels: {labels.shape}")
+
     # Set up the model and training components
     model, criterion_span, optimizer_spans, device, num_epochs = setup_model(
-        input_model=input_model,
-        model_class=MultiTaskModel,
+        model_class = MultiTaskModel, 
+        embedding_model = embedding_model, 
+        classification_model = classification_model,
         lr=args.lr,
         weight_decay=args.weight_decay,
         num_epochs=args.num_epochs
@@ -58,8 +84,8 @@ def main(args):
         model=model,
         train_dataloader=train_dataloader,
         dev_dataloader=dev_dataloader,
-        criterion_span=criterion_span,
-        optimizer_spans=optimizer_spans,
+        criterion=criterion_span,
+        optimizer=optimizer_spans,
         device=device,
         num_epochs=num_epochs
     )

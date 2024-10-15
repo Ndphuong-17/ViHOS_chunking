@@ -1,6 +1,8 @@
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import torch 
+import ast
+import re
 
 
 def split_path(path, test_index, train_path, dev_path, test_path):
@@ -42,32 +44,88 @@ def split_path(path, test_index, train_path, dev_path, test_path):
 def prepare_data(file_path):
     df = pd.read_csv(file_path)
 
-    # remove nan
+    # Remove NaN values
     df = df.dropna()
     df = df.reset_index(drop=True)
     print(f"Columns: {df.columns}")
 
-    texts = df['Chunk'].tolist()
-    binary_spans = df['Tag'].tolist()
+    try:
+        texts = df['Text'].tolist()
+    except KeyError:
+        print("Text column not found.")
+        return [], []
+
+    # Parse the 'Tag' column as lists of floats
+    binary_spans = []
+    for tag in df['Tag'].tolist():
+        try:
+            tag = tag.replace(' ', ',')
+            tag = tag.replace('[', '[ ').replace(']', ' ]')  # Add space after '[' and before ']' for better readability
+            parsed_tag = ast.literal_eval(tag)  # Safely evaluate the string to a list of floats
+            binary_spans.append([float(i) for i in parsed_tag])  # Convert to float
+        except:
+            binary_spans.append(tag)  # Append an empty list in case of error
+
 
     return texts, binary_spans
 
-# Dataloader function
+
+import torch
+import re
+
 class TextDataset(torch.utils.data.Dataset):
-    def __init__(self, texts, spans, tokenizer, max_len = 128):
-        self.texts = [tokenizer(text,
-                                padding='max_length',
-                                max_length = max_len, truncation=True,
-                                return_tensors="pt")for text in texts]
-
-
-        self.spans = torch.tensor(spans)
+    def __init__(self, texts, labels, tokenizer, max_length=128, max_sentences=4):
+        self.texts = texts
+        self.labels = labels
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.max_sentences = max_sentences  # Max number of sentences to consider
 
     def __len__(self):
-        return len(self.spans)
+        return len(self.texts)
 
-    def __getitem__(self, index):
-        return self.texts[index], self.spans[index]
+    def __getitem__(self, idx):
+        text = self.texts[idx]
+        label = self.labels[idx]
+
+        # Convert the list to a tensor of type float (for multilabel)
+        label = torch.tensor(label, dtype=torch.float)
+
+        # Split the text into sentences
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+
+        # Tokenize each sentence
+        sentence_embeddings = []
+        for sentence in sentences[:self.max_sentences]:  # Limit to max_sentences
+            encoded = self.tokenizer(
+                sentence,
+                truncation=True,
+                padding='max_length',
+                max_length=self.max_length,
+                return_tensors='pt'
+            )
+            input_ids = encoded['input_ids'].squeeze(0)  # (max_length)
+            attention_mask = encoded['attention_mask'].squeeze(0)  # (max_length)
+            sentence_embeddings.append((input_ids, attention_mask))
+
+        # Pad sentences if there are fewer than max_sentences
+        while len(sentence_embeddings) < self.max_sentences:
+            # Create dummy tensors filled with 0
+            dummy_input = torch.zeros((self.max_length,), dtype=torch.long)
+            dummy_mask = torch.zeros((self.max_length,), dtype=torch.long)
+            sentence_embeddings.append((dummy_input, dummy_mask))
+
+        # Stack the tokenized sentences into tensors
+        input_ids = torch.stack([item[0] for item in sentence_embeddings])  # Shape: (num_sentences, max_length)
+        attention_mask = torch.stack([item[1] for item in sentence_embeddings])  # Shape: (num_sentences, max_length)
+
+
+        return {
+            'input_ids': input_ids,          # Tensor of shape (max_sentences, max_length)
+            'attention_mask': attention_mask,  # Tensor of shape (max_sentences, max_length)
+            'label': label                    # Label for the text
+        }
+
 
 def create_dataloader(data_path, batch_size, tokenizer, max_len, shuffle=True):
     dataset = TextDataset(*prepare_data(data_path), tokenizer, max_len)

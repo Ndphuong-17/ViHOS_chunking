@@ -1,10 +1,6 @@
 import re
 import numpy as np
-# import more_itertools as mit
-from itertools import groupby
-from operator import itemgetter
 import pandas as pd
-from ast import literal_eval
 
 def unicode(text):
     # Define the replacement mappings
@@ -76,31 +72,33 @@ def dupplicate_punctuation(text, pos=[], spans=[]):
     
     return text, pos, new_spans
 
+def deleteIcon(text):
+    text = text.lower()
+    s = ''
+    pattern = r"[a-zA-ZaăâbcdđeêghiklmnoôơpqrstuưvxyàằầbcdđèềghìklmnòồờpqrstùừvxỳáắấbcdđéếghíklmnóốớpqrstúứvxýảẳẩbcdđẻểghỉklmnỏổởpqrstủửvxỷạặậbcdđẹệghịklmnọộợpqrstụựvxỵãẵẫbcdđẽễghĩklmnõỗỡpqrstũữvxỹAĂÂBCDĐEÊGHIKLMNOÔƠPQRSTUƯVXYÀẰẦBCDĐÈỀGHÌKLMNÒỒỜPQRSTÙỪVXỲÁẮẤBCDĐÉẾGHÍKLMNÓỐỚPQRSTÚỨVXÝẠẶẬBCDĐẸỆGHỊKLMNỌỘỢPQRSTỤỰVXỴẢẲẨBCDĐẺỂGHỈKLMNỎỔỞPQRSTỦỬVXỶÃẴẪBCDĐẼỄGHĨKLMNÕỖỠPQRSTŨỮVXỸ,._]"
+    for char in text:
+        if char !=' ':
+            if len(re.findall(pattern, char)) != 0:
+                s+=char
+            elif char == '_':
+                s+=char
+        else:
+            s+=char
+    s = re.sub('\\s+',' ',s)
+    return s.strip()
+
+def to_category_vector(label, classes):
+    vector = np.zeros(len(classes)).astype(np.float64)
+    index = classes.index(label)
+    vector[index] = 1.0
+    return vector
 
 
-def find_ranges(span):
-    # Group consecutive numbers and create ranges.
-    # ex: [0, 1, 3, 20, 21] --> [(0, 1), (3,3), (20, 21)]
-    return [(group[0], group[-1]) for _, g in groupby(enumerate(span), lambda x: x[0] - x[1])
-            for group in [list(map(itemgetter(1), g))]]
 
-def load_data(path):
-    tsd = pd.read_csv(path)
-    tsd['spans'] = tsd['spans'].apply(literal_eval)
-
-    data = []
-    for _, row in tsd.iterrows():
-        text, span = row['text'], row['spans']
-        segments = find_ranges(span) if span else []
-        temp = [[seg[0], seg[-1]] if len(seg) > 1 else [seg[0]] for seg in segments]
-        text_spans = [text[seg[0]:seg[-1] + 1] for seg in segments]
-        
-        data.append({'text': text, 'spans': temp, 'text_spans': text_spans})
-    
-    return data
-
-def sentence_based_chunking(text, pos, spans):
+def sentence_based_chunking(row):
     # Split the text into sentences using basic punctuation marks.
+    text = row['Text']
+    tag = row['Tag']
     sentences = re.split(r'(?<=[.!?])\s+', text)
     chunked_data = []
     start = 0
@@ -109,24 +107,48 @@ def sentence_based_chunking(text, pos, spans):
         # Calculate the end position of the sentence in the original text.
         end = start + len(sentence)
         
-        # Find spans that fall within the current sentence range and adjust them.
-        adjusted_spans = []
-        for span in spans:
-            if span[0] >= start and span[1] <= end:
-                # Adjust spans to be relative to the start of the current sentence.
-                adjusted_spans.append([span[0] - start, span[1] - start])
-
-        # Determine the tag based on whether there are any spans in this sentence.
-        tag = 1 if adjusted_spans else 0
-
         # Append the chunked sentence with its spans and tag.
         chunked_data.append({
             'chunk': sentence,
             'Tag': tag,
-            'spans': adjusted_spans
         })
 
         # Update start position for the next sentence.
         start = end + 1  # +1 to account for space after splitting.
 
     return chunked_data
+
+
+def data_chunking(data):
+    
+    formated_data = []
+
+
+    for _, row in data.iterrows():
+        annotations = sentence_based_chunking(row)
+        annotations = [annotation.values() for annotation in annotations]
+        annotations = [list(annotation) for annotation in annotations]
+
+        # Combine tokens and their corresponding annotations
+        formated_data.extend(annotations)
+        formated_data.append((None, None))  # Append a marker for sentence separation
+
+    # Create a DataFrame from the formatted data
+    df_final = pd.DataFrame(formated_data, columns=['Chunk', 'Tag'])
+
+    # Generate sentence IDs
+    sentence_id = []
+    sentence = 0
+    for chunk in df_final['Chunk']:
+        if chunk is not None:
+            sentence_id.append(sentence)
+        else:
+            sentence_id.append(np.nan)
+            sentence += 1
+
+    df_final['sentence_id'] = sentence_id
+    df_final.dropna(subset=['Chunk'], inplace=True)  # Remove rows where 'Chunk' is None
+    df_final['sentence_id'] = df_final['sentence_id'].astype('int64')  # Convert to int64
+    df_final = df_final[['Chunk', 'Tag', 'sentence_id']]
+
+    return df_final
